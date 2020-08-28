@@ -9,8 +9,9 @@ import (
 
 // Config holds server configuration information
 type Config struct {
-	IP   string `json:"ip"`
-	Port string `json:"port"`
+	IP          string `json:"ip"`
+	Port        string `json:"port"`
+	CheckUpdate bool   `json:"check_update"`
 }
 
 // GetConfig loads the server configuration from the file

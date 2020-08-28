@@ -21,8 +21,9 @@ var (
 	currentDir  = directory{
 		Name: "~",
 	}
-	version = "0.4"
-	server  = ""
+	version     = "0.4"
+	server      string
+	checkUpdate bool
 )
 
 // Version object to more easily read version
@@ -32,13 +33,16 @@ type Version struct {
 
 func main() {
 	loadConfig()
-	update()
+	if checkUpdate {
+		update()
+	}
 	fglInit()
 }
 
 func loadConfig() {
 	config := config.GetConfig()
 	server = config.IP + ":" + config.Port
+	checkUpdate = config.CheckUpdate
 }
 
 func init() {
@@ -56,7 +60,6 @@ func init() {
 }
 
 func fglInit() {
-	//initMenu("")
 	loginMenu("")
 }
 
@@ -74,7 +77,7 @@ func update() {
 	resp, err := http.Post(baseURL("/recversion"), "application/json", bytes.NewBuffer(cv))
 
 	if err != nil {
-		fmt.Println("Unable to connect to server. Contact LM 001 or LM 003.")
+		fmt.Println("Unable to connect to server.")
 		fmt.Println()
 		fmt.Println()
 		fmt.Println("Press enter to close.")
