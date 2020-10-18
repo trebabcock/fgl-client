@@ -1,16 +1,17 @@
 package main
 
 import (
-	"encoding/json"
+	"bufio"
 	"fmt"
-	"io/ioutil"
 	"log"
-	"net/http"
+	"net"
 	"strconv"
+	"sync"
 
-	"github.com/c-bata/go-prompt"
 	_ "github.com/logrusorgru/aurora"
 	"github.com/marcusolsson/tui-go"
+
+	"github.com/rivo/tview"
 )
 
 var (
@@ -55,7 +56,7 @@ func registerMenu(opt string) {
 
 	window := tui.NewVBox(
 		tui.NewPadder(10, 1, tui.NewLabel(logo)),
-		tui.NewPadder(12, 0, tui.NewLabel("Welcome to the FGL Database")),
+		tui.NewPadder(20, 0, tui.NewLabel("Welcome to the FGL Database")),
 		tui.NewPadder(1, 1, form),
 		buttons,
 	)
@@ -81,6 +82,20 @@ func registerMenu(opt string) {
 	}
 
 	ui.SetKeybinding("Esc", func() { ui.Quit() })
+
+	cPassword.OnSubmit(func(e *tui.Entry) {
+		status.SetText("Registering...")
+		if password.Text() != cPassword.Text() {
+			registerMenu("Passwords Do Not Match")
+		} else {
+			creds := credentials{
+				Username: username.Text(),
+				Password: password.Text(),
+			}
+			tui.UI.Quit(ui)
+			register(creds)
+		}
+	})
 
 	registerb.OnActivated(func(b *tui.Button) {
 		status.SetText("Registering...")
@@ -144,7 +159,7 @@ func loginMenu(opt string) {
 
 	window := tui.NewVBox(
 		tui.NewPadder(10, 1, tui.NewLabel(logo)),
-		tui.NewPadder(12, 0, tui.NewLabel("Welcome to the FGL Database")),
+		tui.NewPadder(20, 0, tui.NewLabel("Welcome to the FGL Database")),
 		tui.NewPadder(1, 1, form),
 		buttons,
 	)
@@ -170,6 +185,16 @@ func loginMenu(opt string) {
 	}
 
 	ui.SetKeybinding("Esc", func() { ui.Quit() })
+
+	password.OnSubmit(func(e *tui.Entry) {
+		status.SetText("Logging in...")
+		creds := credentials{
+			Username: username.Text(),
+			Password: password.Text(),
+		}
+		tui.UI.Quit(ui)
+		login(creds)
+	})
 
 	loginb.OnActivated(func(b *tui.Button) {
 		status.SetText("Logging in...")
@@ -199,414 +224,1091 @@ func loginMenu(opt string) {
 }
 
 func mainMenu(opt string) {
-	clear()
-	fmt.Println(opt)
-	//fmt.Println(Red("FGL Database v" + version))
-	fmt.Println()
-	fmt.Println("[0] Announcements")
-	fmt.Println("[1] Lab Member Reports")
-	fmt.Println("[2] Future Gadget Reports")
-	fmt.Println("[3] Shell")
-	fmt.Println("[4] Chat")
-	fmt.Println("[5] Exit")
-	fmt.Println()
-	fmt.Println()
+	app := tview.NewApplication()
+	header := tview.NewTextView().SetText("FGL Database v" + string(version))
+	list := tview.NewList().
+		AddItem("Announcements", "", '0', func() {
+			app.Stop()
+			announcementsPreMenu()
+		}).
+		AddItem("Lab Member Reports", "", '1', func() {
+			app.Stop()
+			lmReportsPreMenu()
+		}).
+		AddItem("Future Gadget Reports", "", '2', func() {
+			app.Stop()
+			fgReportsPreMenu()
+		}).
+		AddItem("Shell", "", '3', func() {
+			app.Stop()
+			shell()
+		}).
+		AddItem("Chat", "", '4', func() {
+			app.Stop()
+			chat()
+		}).
+		AddItem("Exit", "", 'q', func() {
+			app.Stop()
+			terminate()
+		})
 
-	c := prompt.Choose(makeMainPrompt(), []string{})
+	flex := tview.NewFlex().SetDirection(tview.FlexRow).
+		AddItem(header, 0, 1, false).
+		AddItem(list, 0, 10, true)
 
-	switch c {
-	case "0":
-		announcementsPreMenu()
-	case "1":
-		lmReportsPreMenu()
-	case "2":
-		fgReportsPreMenu()
-	case "3":
-		shell()
-	case "4":
-		chat()
-	case "5":
-		terminate()
-	default:
-		mainMenu("")
+	if err := app.SetRoot(flex, true).EnableMouse(false).Run(); err != nil {
+		panic(err)
 	}
 }
-
-// Announcement
 
 func announcementsPreMenu() {
+	app := tview.NewApplication()
+	header := tview.NewTextView().SetText("Announcements")
+	list := tview.NewList().
+		AddItem("View Announcements", "", '0', func() {
+			app.Stop()
+			listAnnouncements()
+		}).
+		AddItem("Make Announcement", "", '1', func() {
+			app.Stop()
+			makeAnnouncement("")
+		}).
+		AddItem("Back", "", 'b', func() {
+			app.Stop()
+			mainMenu("")
+		})
+
+	flex := tview.NewFlex().SetDirection(tview.FlexRow).
+		AddItem(header, 0, 1, false).
+		AddItem(list, 0, 10, true)
+
+	if err := app.SetRoot(flex, true).EnableMouse(false).Run(); err != nil {
+		panic(err)
+	}
+}
+
+func viewAnnouncement(id string, opt string) {
 	clear()
-	fmt.Println()
-	fmt.Println("Announcements")
-	fmt.Println()
-	fmt.Println("[0] View Announcements")
-	fmt.Println("[1] Make Announcement")
-	fmt.Println("[2] Back")
-	fmt.Println()
-	fmt.Println()
+	ann := getAnnouncement(id)
 
-	c := prompt.Choose(makeMainPrompt(), []string{})
+	status := tui.NewStatusBar(opt)
 
-	switch c {
-	case "0":
+	edit := tui.NewButton("[Edit]")
+
+	delete := tui.NewButton("[Delete]")
+
+	back := tui.NewButton("[Back]")
+
+	buttons := tui.NewHBox(
+		tui.NewSpacer(),
+		tui.NewPadder(1, 0, edit),
+		tui.NewPadder(1, 0, delete),
+		tui.NewPadder(1, 0, back),
+	)
+
+	annBody := tui.NewVBox(
+		tui.NewLabel(wordWrap(ann.Body, 70)),
+	)
+
+	window := tui.NewVBox(
+		tui.NewPadder(20, 1, tui.NewLabel(ann.Title)),
+		annBody,
+		tui.NewSpacer(),
+		tui.NewSpacer(),
+		buttons,
+	)
+	window.SetBorder(false)
+
+	wrapper := tui.NewVBox(
+		tui.NewSpacer(),
+		window,
+		tui.NewSpacer(),
+	)
+	content := tui.NewHBox(tui.NewSpacer(), wrapper, tui.NewSpacer())
+
+	root := tui.NewVBox(
+		content,
+		status,
+	)
+
+	tui.DefaultFocusChain.Set(back, edit, delete)
+
+	ui, err := tui.New(root)
+	if err != nil {
+		log.Fatal(err)
+	}
+
+	ui.SetKeybinding("Esc", func() { ui.Quit() })
+
+	edit.OnActivated(func(b *tui.Button) {
+		if ann.Author != currentUser {
+			ui.Quit()
+			s := strconv.FormatInt(ann.AID, 10)
+			viewAnnouncement(s, "You cannot edit another member's announcement.")
+		} else {
+			ui.Quit()
+			s := strconv.FormatInt(ann.AID, 10)
+			editAnnouncement(s)
+		}
+	})
+
+	delete.OnActivated(func(b *tui.Button) {
+		if ann.Author != currentUser {
+			ui.Quit()
+			s := strconv.FormatInt(ann.AID, 10)
+			viewAnnouncement(s, "You cannot delete another member's announcement.")
+		} else {
+			ui.Quit()
+			s := strconv.FormatInt(ann.AID, 10)
+			deleteAnnouncement(s)
+			listAnnouncements()
+		}
+	})
+
+	back.OnActivated(func(b *tui.Button) {
+		ui.Quit()
 		listAnnouncements()
-	case "1":
-		makeAnnouncement()
-	case "2":
-		mainMenu("")
-	default:
+	})
+
+	if err := ui.Run(); err != nil {
+		log.Fatal(err)
+	}
+}
+
+func editAnnouncement(id string) {
+	clear()
+
+	ann := getAnnouncement(id)
+
+	title := tui.NewEntry()
+	title.SetFocused(true)
+	title.SetText(ann.Title)
+
+	body := tui.NewEntry()
+	body.SetText(ann.Body)
+
+	form := tui.NewGrid(1, 2)
+	form.AppendRow(tui.NewLabel("Title"))
+	form.AppendRow(title)
+	form.AppendRow(tui.NewLabel("Body"))
+	form.AppendRow(body)
+
+	status := tui.NewStatusBar("")
+
+	submit := tui.NewButton("[Submit]")
+
+	cancel := tui.NewButton("[Cancel]")
+
+	buttons := tui.NewHBox(
+		tui.NewSpacer(),
+		tui.NewPadder(1, 0, submit),
+		tui.NewPadder(1, 0, cancel),
+	)
+
+	window := tui.NewVBox(
+		tui.NewPadder(12, 0, tui.NewLabel("Edit Announcement")),
+		tui.NewPadder(1, 1, form),
+		buttons,
+	)
+	window.SetBorder(true)
+
+	wrapper := tui.NewVBox(
+		tui.NewSpacer(),
+		window,
+		tui.NewSpacer(),
+	)
+	content := tui.NewHBox(tui.NewSpacer(), wrapper, tui.NewSpacer())
+
+	root := tui.NewVBox(
+		content,
+		status,
+	)
+
+	tui.DefaultFocusChain.Set(title, body, submit, cancel)
+
+	ui, err := tui.New(root)
+	if err != nil {
+		log.Fatal(err)
+	}
+
+	ui.SetKeybinding("Esc", func() { ui.Quit() })
+
+	submit.OnActivated(func(b *tui.Button) {
+		status.SetText("Submitting...")
+		a := announcement{
+			Author: ann.Author,
+			Title:  title.Text(),
+			Body:   body.Text(),
+			AID:    ann.AID,
+		}
+		ui.Quit()
+		s := strconv.FormatInt(ann.AID, 10)
+		updateAnnouncement(s, a)
+		viewAnnouncement(s, "")
+	})
+
+	cancel.OnActivated(func(b *tui.Button) {
+		status.SetText("Cancelling...")
+		ui.Quit()
+		s := strconv.FormatInt(ann.AID, 10)
+		viewAnnouncement(s, "")
+	})
+
+	if err := ui.Run(); err != nil {
+		log.Fatal(err)
+	}
+}
+
+func makeAnnouncement(opt string) {
+	clear()
+
+	title := tui.NewEntry()
+	title.SetFocused(true)
+
+	body := tui.NewEntry()
+
+	form := tui.NewGrid(1, 2)
+	form.AppendRow(tui.NewLabel("Title"))
+	form.AppendRow(title)
+	form.AppendRow(tui.NewSpacer())
+	form.AppendRow(tui.NewLabel("Body"))
+	form.AppendRow(body)
+
+	status := tui.NewStatusBar(opt)
+
+	submit := tui.NewButton("[Submit]")
+
+	cancel := tui.NewButton("[Cancel]")
+
+	buttons := tui.NewHBox(
+		tui.NewSpacer(),
+		tui.NewPadder(1, 0, submit),
+		tui.NewPadder(1, 0, cancel),
+	)
+
+	window := tui.NewVBox(
+		tui.NewPadder(12, 0, tui.NewLabel("Submit a New Announcement")),
+		tui.NewPadder(1, 1, form),
+		buttons,
+	)
+	window.SetBorder(true)
+
+	wrapper := tui.NewVBox(
+		tui.NewSpacer(),
+		window,
+		tui.NewSpacer(),
+	)
+	content := tui.NewHBox(tui.NewSpacer(), wrapper, tui.NewSpacer())
+
+	root := tui.NewVBox(
+		content,
+		status,
+	)
+
+	tui.DefaultFocusChain.Set(title, body, submit, cancel)
+
+	ui, err := tui.New(root)
+	if err != nil {
+		log.Fatal(err)
+	}
+
+	ui.SetKeybinding("Esc", func() { ui.Quit() })
+
+	submit.OnActivated(func(b *tui.Button) {
+		status.SetText("Submitting...")
+		ann := announcement{
+			Author: currentUser,
+			Title:  title.Text(),
+			Body:   body.Text(),
+		}
+		ui.Quit()
+		sendAnnouncement(ann)
+	})
+
+	cancel.OnActivated(func(b *tui.Button) {
+		status.SetText("Cancelling...")
+		ui.Quit()
 		announcementsPreMenu()
+	})
+
+	if err := ui.Run(); err != nil {
+		log.Fatal(err)
 	}
-}
-
-func viewAnnouncement(ann announcement) {
-	clear()
-	fmt.Println()
-	fmt.Println()
-	//fmt.Println(Red(ann.Author))
-	fmt.Println(ann.Title)
-	fmt.Println()
-	fmt.Println(wordWrap(ann.Body, 70))
-	fmt.Println()
-	fmt.Println()
-
-	ap := prompt.Choose(makeMainPrompt(), []string{})
-
-	switch ap {
-	default:
-		listAnnouncements()
-	}
-}
-
-func makeAnnouncement() {
-	clear()
-	fmt.Print("\nMake Announcement\n\n")
-	title := prompt.Input("Title: ", emptyCompleter)
-	body := prompt.Input("Body: ", emptyCompleter)
-
-	ann := announcement{
-		Author: currentUser,
-		Title:  title,
-		Body:   body,
-	}
-
-	sendAnnouncement(ann)
 }
 
 func listAnnouncements() {
-	clear()
+	announcements := getAnnouncements()
 
-	announcements := make([]announcement, 0)
+	app := tview.NewApplication()
+	header := tview.NewTextView().SetText("Announcements")
+	list := tview.NewList()
 
-	resp, err := http.Get(baseURL("/announcements"))
-	if err != nil {
-		mainMenu("GET: Internal Server Error")
-	}
-
-	body, _ := ioutil.ReadAll(resp.Body)
-
-	json.Unmarshal(body, &announcements)
-
-	defer resp.Body.Close()
-
-	choices := make([]string, 0)
-
-	fmt.Println()
-	fmt.Println()
 	for i, ann := range announcements {
-		fmt.Println("[" + strconv.Itoa(i) + "] " + ann.Title + " - " + ann.Author)
-		choices = append(choices, strconv.Itoa(i))
+		a := ann
+		list.InsertItem(i, ann.Title+" - "+ann.Author, "", ' ', func() {
+			app.Stop()
+			s := strconv.FormatInt(a.AID, 10)
+			viewAnnouncement(s, "")
+		})
 	}
-	fmt.Println()
-	fmt.Println()
-	a := prompt.Choose(makeMainPrompt(), []string{})
 
-	switch a {
-	case "":
-		mainMenu("")
-	case "back":
-		mainMenu("")
-	case "exit":
-		mainMenu("")
-	default:
-		fmt.Println(a)
-		ann := announcement{}
+	list.InsertItem(len(announcements), "Back", "", 'b', func() {
+		app.Stop()
+		announcementsPreMenu()
+	})
 
-		aint, _ := strconv.ParseInt(a, 10, 32)
-		aint++
-		astr := strconv.Itoa(int(aint))
+	flex := tview.NewFlex().SetDirection(tview.FlexRow).
+		AddItem(header, 0, 1, false).
+		AddItem(list, 0, 10, true)
 
-		annr, err := http.Get(baseURL("/announcement/" + astr))
-		if err != nil {
-			listAnnouncements()
-		}
-		abody, err := ioutil.ReadAll(annr.Body)
-		if err != nil {
-			listAnnouncements()
-		}
-		asdf := json.Unmarshal(abody, &ann)
-		if asdf != nil {
-			listAnnouncements()
-		}
-		defer annr.Body.Close()
-		viewAnnouncement(ann)
+	if err := app.SetRoot(flex, true).EnableMouse(false).Run(); err != nil {
+		panic(err)
 	}
 }
 
-// Lab Member Report
+// Lab Reports
 
 func lmReportsPreMenu() {
-	clear()
-	fmt.Println()
-	fmt.Println("Lab Member Reports")
-	fmt.Println()
-	fmt.Println("[0] View Reports")
-	fmt.Println("[1] Submit Report")
-	fmt.Println("[2] Back")
-	fmt.Println()
-	fmt.Println()
+	app := tview.NewApplication()
+	header := tview.NewTextView().SetText("Lab Member Reports")
+	list := tview.NewList().
+		AddItem("View Reports", "", '0', func() {
+			app.Stop()
+			listLmReports()
+		}).
+		AddItem("Submit Report", "", '1', func() {
+			app.Stop()
+			makeLmReport()
+		}).
+		AddItem("Back", "", 'b', func() {
+			app.Stop()
+			mainMenu("")
+		})
 
-	c := prompt.Choose(makeMainPrompt(), []string{})
+	flex := tview.NewFlex().SetDirection(tview.FlexRow).
+		AddItem(header, 0, 1, false).
+		AddItem(list, 0, 10, true)
 
-	switch c {
-	case "0":
-		listLmReports()
-	case "1":
-		makeLmReport()
-	case "2":
-		mainMenu("")
-	default:
-		lmReportsPreMenu()
+	if err := app.SetRoot(flex, true).EnableMouse(false).Run(); err != nil {
+		panic(err)
 	}
 }
 
-func viewLmReport(lr labReport) {
+func viewLmReport(id string, opt string) {
 	clear()
-	fmt.Println()
-	fmt.Println()
-	//fmt.Println(Red(lr.Author))
-	fmt.Println(lr.Title)
-	fmt.Println()
-	fmt.Println(lr.Subject)
-	fmt.Println()
-	fmt.Println(wordWrap(lr.Body, 70))
-	fmt.Println()
-	fmt.Println()
+	lr := getLmReport(id)
 
-	ap := prompt.Choose(makeMainPrompt(), []string{})
+	status := tui.NewStatusBar(opt)
 
-	switch ap {
-	default:
+	edit := tui.NewButton("[Edit]")
+
+	delete := tui.NewButton("[Delete]")
+
+	back := tui.NewButton("[Back]")
+
+	buttons := tui.NewHBox(
+		tui.NewSpacer(),
+		tui.NewPadder(1, 0, edit),
+		tui.NewPadder(1, 0, delete),
+		tui.NewPadder(1, 0, back),
+	)
+
+	lrBody := tui.NewVBox(
+		tui.NewLabel(wordWrap(lr.Body, 70)),
+	)
+
+	window := tui.NewVBox(
+		tui.NewPadder(20, 1, tui.NewLabel(lr.Title)),
+		tui.NewPadder(0, 1, tui.NewLabel(lr.Subject)),
+		lrBody,
+		tui.NewSpacer(),
+		tui.NewSpacer(),
+		buttons,
+	)
+	window.SetBorder(false)
+
+	wrapper := tui.NewVBox(
+		tui.NewSpacer(),
+		window,
+		tui.NewSpacer(),
+	)
+	content := tui.NewHBox(tui.NewSpacer(), wrapper, tui.NewSpacer())
+
+	root := tui.NewVBox(
+		content,
+		status,
+	)
+
+	tui.DefaultFocusChain.Set(back, edit, delete)
+
+	ui, err := tui.New(root)
+	if err != nil {
+		log.Fatal(err)
+	}
+
+	ui.SetKeybinding("Esc", func() { ui.Quit() })
+
+	edit.OnActivated(func(b *tui.Button) {
+		if lr.Author != currentUser {
+			ui.Quit()
+			s := strconv.FormatInt(lr.RID, 10)
+			viewLmReport(s, "You cannot edit another member's Lab Report.")
+		} else {
+			ui.Quit()
+			s := strconv.FormatInt(lr.RID, 10)
+			editLmReport(s)
+		}
+	})
+
+	delete.OnActivated(func(b *tui.Button) {
+		if lr.Author != currentUser {
+			ui.Quit()
+			s := strconv.FormatInt(lr.RID, 10)
+			viewLmReport(s, "You cannot delete another member's Lab Report.")
+		} else {
+			ui.Quit()
+			s := strconv.FormatInt(lr.RID, 10)
+			deleteLmReport(s)
+			listLmReports()
+		}
+	})
+
+	back.OnActivated(func(b *tui.Button) {
+		ui.Quit()
 		listLmReports()
+	})
+
+	if err := ui.Run(); err != nil {
+		log.Fatal(err)
 	}
 }
 
 func makeLmReport() {
 	clear()
-	fmt.Print("\nMake Lab Member Report\n\n")
-	title := prompt.Input("Title: ", emptyCompleter)
-	subject := prompt.Input("Subject: ", emptyCompleter)
-	body := prompt.Input("Body: ", emptyCompleter)
 
-	lr := labReport{
-		Author:  currentUser,
-		Title:   title,
-		Subject: subject,
-		Body:    body,
+	title := tui.NewEntry()
+	title.SetFocused(true)
+
+	subject := tui.NewEntry()
+	body := tui.NewEntry()
+
+	form := tui.NewGrid(1, 2)
+	form.AppendRow(tui.NewLabel("Title"))
+	form.AppendRow(title)
+	form.AppendRow(tui.NewSpacer())
+	form.AppendRow(tui.NewLabel("Subject"))
+	form.AppendRow(subject)
+	form.AppendRow(tui.NewSpacer())
+	form.AppendRow(tui.NewLabel("Body"))
+	form.AppendRow(body)
+
+	status := tui.NewStatusBar("")
+
+	submit := tui.NewButton("[Submit]")
+
+	cancel := tui.NewButton("[Cancel]")
+
+	buttons := tui.NewHBox(
+		tui.NewSpacer(),
+		tui.NewPadder(1, 0, submit),
+		tui.NewPadder(1, 0, cancel),
+	)
+
+	window := tui.NewVBox(
+		tui.NewPadder(12, 0, tui.NewLabel("Submit a New Lab Member Report")),
+		tui.NewPadder(1, 1, form),
+		buttons,
+	)
+	window.SetBorder(true)
+
+	wrapper := tui.NewVBox(
+		tui.NewSpacer(),
+		window,
+		tui.NewSpacer(),
+	)
+	content := tui.NewHBox(tui.NewSpacer(), wrapper, tui.NewSpacer())
+
+	root := tui.NewVBox(
+		content,
+		status,
+	)
+
+	tui.DefaultFocusChain.Set(title, subject, body, submit, cancel)
+
+	ui, err := tui.New(root)
+	if err != nil {
+		log.Fatal(err)
 	}
 
-	sendLmReport(lr)
+	ui.SetKeybinding("Esc", func() { ui.Quit() })
+
+	submit.OnActivated(func(b *tui.Button) {
+		status.SetText("Submitting...")
+		lr := labReport{
+			Author:  currentUser,
+			Title:   title.Text(),
+			Subject: subject.Text(),
+			Body:    body.Text(),
+		}
+		ui.Quit()
+		sendLmReport(lr)
+	})
+
+	cancel.OnActivated(func(b *tui.Button) {
+		status.SetText("Cancelling...")
+		ui.Quit()
+		lmReportsPreMenu()
+	})
+
+	if err := ui.Run(); err != nil {
+		log.Fatal(err)
+	}
+}
+
+func editLmReport(id string) {
+	clear()
+
+	lr := getLmReport(id)
+
+	title := tui.NewEntry()
+	title.SetFocused(true)
+	title.SetText(lr.Title)
+
+	subject := tui.NewEntry()
+	subject.SetText(lr.Subject)
+
+	body := tui.NewEntry()
+	body.SetText(lr.Body)
+
+	form := tui.NewGrid(1, 2)
+	form.AppendRow(tui.NewLabel("Title"))
+	form.AppendRow(title)
+	form.AppendRow(tui.NewSpacer())
+	form.AppendRow(tui.NewLabel("Subject"))
+	form.AppendRow(subject)
+	form.AppendRow(tui.NewSpacer())
+	form.AppendRow(tui.NewLabel("Body"))
+	form.AppendRow(body)
+
+	status := tui.NewStatusBar("")
+
+	submit := tui.NewButton("[Submit]")
+
+	cancel := tui.NewButton("[Cancel]")
+
+	buttons := tui.NewHBox(
+		tui.NewSpacer(),
+		tui.NewPadder(1, 0, submit),
+		tui.NewPadder(1, 0, cancel),
+	)
+
+	window := tui.NewVBox(
+		tui.NewPadder(12, 0, tui.NewLabel("Edit Lab Report")),
+		tui.NewPadder(1, 1, form),
+		buttons,
+	)
+	window.SetBorder(true)
+
+	wrapper := tui.NewVBox(
+		tui.NewSpacer(),
+		window,
+		tui.NewSpacer(),
+	)
+	content := tui.NewHBox(tui.NewSpacer(), wrapper, tui.NewSpacer())
+
+	root := tui.NewVBox(
+		content,
+		status,
+	)
+
+	tui.DefaultFocusChain.Set(title, subject, body, submit, cancel)
+
+	ui, err := tui.New(root)
+	if err != nil {
+		log.Fatal(err)
+	}
+
+	ui.SetKeybinding("Esc", func() { ui.Quit() })
+
+	submit.OnActivated(func(b *tui.Button) {
+		status.SetText("Submitting...")
+		l := labReport{
+			Author:  lr.Author,
+			Title:   title.Text(),
+			Subject: subject.Text(),
+			Body:    body.Text(),
+			RID:     lr.RID,
+		}
+		tui.UI.Quit(ui)
+		s := strconv.FormatInt(lr.RID, 10)
+		updateLmReport(s, l)
+		viewLmReport(s, "")
+	})
+
+	cancel.OnActivated(func(b *tui.Button) {
+		status.SetText("Cancelling...")
+		tui.UI.Quit(ui)
+		s := strconv.FormatInt(lr.RID, 10)
+		viewLmReport(s, "")
+	})
+
+	if err := ui.Run(); err != nil {
+		log.Fatal(err)
+	}
 }
 
 func listLmReports() {
-	clear()
+	labReports := getLmReports()
 
-	lmr := make([]labReport, 0)
+	app := tview.NewApplication()
+	header := tview.NewTextView().SetText("Lab Member Reports")
+	list := tview.NewList()
 
-	resp, err := http.Get(baseURL("/labreports"))
-	if err != nil {
-		mainMenu("GET: Internal Server Error")
+	for i, lr := range labReports {
+		l := lr
+		list.InsertItem(i, l.Title+" - "+l.Author, "", ' ', func() {
+			app.Stop()
+			s := strconv.FormatInt(l.RID, 10)
+			viewLmReport(s, "")
+		})
 	}
 
-	body, _ := ioutil.ReadAll(resp.Body)
+	list.InsertItem(len(labReports), "Back", "", 'b', func() {
+		app.Stop()
+		lmReportsPreMenu()
+	})
 
-	json.Unmarshal(body, &lmr)
+	flex := tview.NewFlex().SetDirection(tview.FlexRow).
+		AddItem(header, 0, 1, false).
+		AddItem(list, 0, 10, true)
 
-	defer resp.Body.Close()
-
-	choices := make([]string, 0)
-
-	fmt.Println()
-	fmt.Println()
-	for i, lm := range lmr {
-		fmt.Println("[" + strconv.Itoa(i) + "] " + lm.Title + " - " + lm.Author)
-		choices = append(choices, strconv.Itoa(i))
-	}
-	fmt.Println()
-	fmt.Println()
-	a := prompt.Choose(makeMainPrompt(), []string{})
-
-	switch a {
-	case "":
-		mainMenu("")
-	case "back":
-		mainMenu("")
-	case "exit":
-		mainMenu("")
-	default:
-		fmt.Println(a)
-		lm := labReport{}
-
-		lint, _ := strconv.ParseInt(a, 10, 32)
-		lint++
-		lstr := strconv.Itoa(int(lint))
-
-		lmrr, err := http.Get(baseURL("/labreport/" + lstr))
-		if err != nil {
-			listLmReports()
-		}
-		lbody, err := ioutil.ReadAll(lmrr.Body)
-		if err != nil {
-			listLmReports()
-		}
-		asdf := json.Unmarshal(lbody, &lm)
-		if asdf != nil {
-			listLmReports()
-		}
-		defer lmrr.Body.Close()
-		viewLmReport(lm)
+	if err := app.SetRoot(flex, true).EnableMouse(false).Run(); err != nil {
+		panic(err)
 	}
 }
 
 // Future Gadget Report
 
 func fgReportsPreMenu() {
-	clear()
-	fmt.Println()
-	fmt.Println("Future Gadget Reports")
-	fmt.Println()
-	fmt.Println("[0] View Reports")
-	fmt.Println("[1] Submit Report")
-	fmt.Println("[2] Back")
-	fmt.Println()
-	fmt.Println()
+	app := tview.NewApplication()
+	header := tview.NewTextView().SetText("Future Gadget Reports")
+	list := tview.NewList().
+		AddItem("View Reports", "", '0', func() {
+			app.Stop()
+			listFgReports()
+		}).
+		AddItem("Submit Report", "", '1', func() {
+			app.Stop()
+			makeFgReport()
+		}).
+		AddItem("Back", "", 'b', func() {
+			app.Stop()
+			mainMenu("")
+		})
 
-	c := prompt.Choose(makeMainPrompt(), []string{})
+	flex := tview.NewFlex().SetDirection(tview.FlexRow).
+		AddItem(header, 0, 1, false).
+		AddItem(list, 0, 10, true)
 
-	switch c {
-	case "0":
-		listFgReports()
-	case "1":
-		makeFgReport()
-	case "2":
-		mainMenu("")
-	default:
-		fgReportsPreMenu()
+	if err := app.SetRoot(flex, true).EnableMouse(false).Run(); err != nil {
+		panic(err)
 	}
 }
 
-func viewFgReport(fg gadgetReport) {
+func viewFgReport(id string, opt string) {
 	clear()
-	fmt.Println()
-	fmt.Println()
-	//fmt.Println(Red(fg.Author))
-	fmt.Println(fg.Title)
-	fmt.Println()
-	fmt.Println(wordWrap(fg.Body, 70))
-	fmt.Println()
-	fmt.Println()
+	gr := getFgReport(id)
 
-	ap := prompt.Choose(makeMainPrompt(), []string{})
+	status := tui.NewStatusBar(opt)
 
-	switch ap {
-	default:
+	edit := tui.NewButton("[Edit]")
+
+	delete := tui.NewButton("[Delete]")
+
+	back := tui.NewButton("[Back]")
+
+	buttons := tui.NewHBox(
+		tui.NewSpacer(),
+		tui.NewPadder(1, 0, edit),
+		tui.NewPadder(1, 0, delete),
+		tui.NewPadder(1, 0, back),
+	)
+
+	grBody := tui.NewVBox(
+		tui.NewLabel(wordWrap(gr.Body, 70)),
+	)
+
+	window := tui.NewVBox(
+		tui.NewPadder(20, 1, tui.NewLabel(gr.Title)),
+		grBody,
+		tui.NewSpacer(),
+		tui.NewSpacer(),
+		buttons,
+	)
+	window.SetBorder(false)
+
+	wrapper := tui.NewVBox(
+		tui.NewSpacer(),
+		window,
+		tui.NewSpacer(),
+	)
+	content := tui.NewHBox(tui.NewSpacer(), wrapper, tui.NewSpacer())
+
+	root := tui.NewVBox(
+		content,
+		status,
+	)
+
+	tui.DefaultFocusChain.Set(back, edit, delete)
+
+	ui, err := tui.New(root)
+	if err != nil {
+		log.Fatal(err)
+	}
+
+	ui.SetKeybinding("Esc", func() { ui.Quit() })
+
+	edit.OnActivated(func(b *tui.Button) {
+		if gr.Author != currentUser {
+			ui.Quit()
+			s := strconv.FormatInt(gr.RID, 10)
+			viewFgReport(s, "You cannot edit another member's Future Gadget Report.")
+		} else {
+			ui.Quit()
+			s := strconv.FormatInt(gr.RID, 10)
+			editFgReport(s)
+		}
+	})
+
+	delete.OnActivated(func(b *tui.Button) {
+		if gr.Author != currentUser {
+			ui.Quit()
+			s := strconv.FormatInt(gr.RID, 10)
+			viewFgReport(s, "You cannot delete another member's Future Gadget Report.")
+		} else {
+			ui.Quit()
+			s := strconv.FormatInt(gr.RID, 10)
+			deleteFgReport(s)
+			listFgReports()
+		}
+	})
+
+	back.OnActivated(func(b *tui.Button) {
+		ui.Quit()
 		listFgReports()
+	})
+
+	if err := ui.Run(); err != nil {
+		log.Fatal(err)
 	}
 }
 
 func makeFgReport() {
 	clear()
-	fmt.Print("\nMake Future Gadget Report\n\n")
-	title := prompt.Input("Title: ", emptyCompleter)
-	body := prompt.Input("Body: ", emptyCompleter)
 
-	fg := gadgetReport{
-		Author: currentUser,
-		Title:  title,
-		Body:   body,
+	title := tui.NewEntry()
+	title.SetFocused(true)
+
+	body := tui.NewEntry()
+
+	form := tui.NewGrid(1, 2)
+	form.AppendRow(tui.NewLabel("Title"))
+	form.AppendRow(title)
+	form.AppendRow(tui.NewSpacer())
+	form.AppendRow(tui.NewLabel("Body"))
+	form.AppendRow(body)
+
+	status := tui.NewStatusBar("")
+
+	submit := tui.NewButton("[Submit]")
+
+	cancel := tui.NewButton("[Cancel]")
+
+	buttons := tui.NewHBox(
+		tui.NewSpacer(),
+		tui.NewPadder(1, 0, submit),
+		tui.NewPadder(1, 0, cancel),
+	)
+
+	window := tui.NewVBox(
+		tui.NewPadder(12, 0, tui.NewLabel("Submit a New Future Gadget Report")),
+		tui.NewPadder(1, 1, form),
+		buttons,
+	)
+	window.SetBorder(true)
+
+	wrapper := tui.NewVBox(
+		tui.NewSpacer(),
+		window,
+		tui.NewSpacer(),
+	)
+	content := tui.NewHBox(tui.NewSpacer(), wrapper, tui.NewSpacer())
+
+	root := tui.NewVBox(
+		content,
+		status,
+	)
+
+	tui.DefaultFocusChain.Set(title, body, submit, cancel)
+
+	ui, err := tui.New(root)
+	if err != nil {
+		log.Fatal(err)
 	}
 
-	sendFgReport(fg)
+	ui.SetKeybinding("Esc", func() { ui.Quit() })
+
+	submit.OnActivated(func(b *tui.Button) {
+		status.SetText("Submitting...")
+		gr := gadgetReport{
+			Author: currentUser,
+			Title:  title.Text(),
+			Body:   body.Text(),
+		}
+		ui.Quit()
+		sendFgReport(gr)
+		listFgReports()
+	})
+
+	cancel.OnActivated(func(b *tui.Button) {
+		status.SetText("Cancelling...")
+		ui.Quit()
+		fgReportsPreMenu()
+	})
+
+	if err := ui.Run(); err != nil {
+		log.Fatal(err)
+	}
+}
+
+func editFgReport(id string) {
+	clear()
+
+	gr := getFgReport(id)
+
+	title := tui.NewEntry()
+	title.SetFocused(true)
+	title.SetText(gr.Title)
+
+	body := tui.NewEntry()
+	body.SetText(gr.Body)
+
+	form := tui.NewGrid(1, 2)
+	form.AppendRow(tui.NewLabel("Title"))
+	form.AppendRow(title)
+	form.AppendRow(tui.NewSpacer())
+	form.AppendRow(tui.NewLabel("Body"))
+	form.AppendRow(body)
+
+	status := tui.NewStatusBar("")
+
+	submit := tui.NewButton("[Submit]")
+
+	cancel := tui.NewButton("[Cancel]")
+
+	buttons := tui.NewHBox(
+		tui.NewSpacer(),
+		tui.NewPadder(1, 0, submit),
+		tui.NewPadder(1, 0, cancel),
+	)
+
+	window := tui.NewVBox(
+		tui.NewPadder(12, 0, tui.NewLabel("Edit Future Gadget Report")),
+		tui.NewPadder(1, 1, form),
+		buttons,
+	)
+	window.SetBorder(true)
+
+	wrapper := tui.NewVBox(
+		tui.NewSpacer(),
+		window,
+		tui.NewSpacer(),
+	)
+	content := tui.NewHBox(tui.NewSpacer(), wrapper, tui.NewSpacer())
+
+	root := tui.NewVBox(
+		content,
+		status,
+	)
+
+	tui.DefaultFocusChain.Set(title, body, submit, cancel)
+
+	ui, err := tui.New(root)
+	if err != nil {
+		log.Fatal(err)
+	}
+
+	ui.SetKeybinding("Esc", func() { ui.Quit() })
+
+	submit.OnActivated(func(b *tui.Button) {
+		status.SetText("Submitting...")
+		g := gadgetReport{
+			Author: gr.Author,
+			Title:  title.Text(),
+			Body:   body.Text(),
+			RID:    gr.RID,
+		}
+		ui.Quit()
+		s := strconv.FormatInt(gr.RID, 10)
+		updateFgReport(s, g)
+		viewFgReport(s, "")
+	})
+
+	cancel.OnActivated(func(b *tui.Button) {
+		status.SetText("Cancelling...")
+		ui.Quit()
+		s := strconv.FormatInt(gr.RID, 10)
+		viewFgReport(s, "")
+	})
+
+	if err := ui.Run(); err != nil {
+		log.Fatal(err)
+	}
 }
 
 func listFgReports() {
-	clear()
+	gadgetReports := getFgReports()
 
-	fgr := make([]gadgetReport, 0)
+	app := tview.NewApplication()
+	header := tview.NewTextView().SetText("Future Gadget Reports")
+	list := tview.NewList()
 
-	resp, err := http.Get(baseURL("/gadgetreports"))
-	if err != nil {
-		mainMenu("GET: Internal Server Error")
+	for i, gr := range gadgetReports {
+		g := gr
+		list.InsertItem(i, g.Title+" - "+g.Author, "", ' ', func() {
+			app.Stop()
+			s := strconv.FormatInt(g.RID, 10)
+			viewFgReport(s, "")
+		})
 	}
 
-	body, _ := ioutil.ReadAll(resp.Body)
+	list.InsertItem(len(gadgetReports), "Back", "", 'b', func() {
+		app.Stop()
+		fgReportsPreMenu()
+	})
 
-	json.Unmarshal(body, &fgr)
+	flex := tview.NewFlex().SetDirection(tview.FlexRow).
+		AddItem(header, 0, 1, false).
+		AddItem(list, 0, 10, true)
 
-	defer resp.Body.Close()
-
-	choices := make([]string, 0)
-
-	fmt.Println()
-	fmt.Println()
-	for i, fg := range fgr {
-		fmt.Println("[" + strconv.Itoa(i) + "] " + fg.Title + " - " + fg.Author)
-		choices = append(choices, strconv.Itoa(i))
-	}
-	fmt.Println()
-	fmt.Println()
-	a := prompt.Choose(makeMainPrompt(), []string{})
-
-	switch a {
-	case "":
-		mainMenu("")
-	case "back":
-		mainMenu("")
-	case "exit":
-		mainMenu("")
-	default:
-		fmt.Println(a)
-		fg := gadgetReport{}
-
-		fint, _ := strconv.ParseInt(a, 10, 32)
-		fint++
-		fstr := strconv.Itoa(int(fint))
-
-		fgrr, err := http.Get(baseURL("/gadgetreport/" + fstr))
-		if err != nil {
-			listFgReports()
-		}
-		fbody, err := ioutil.ReadAll(fgrr.Body)
-		if err != nil {
-			listFgReports()
-		}
-		asdf := json.Unmarshal(fbody, &fg)
-		if asdf != nil {
-			listFgReports()
-		}
-		defer fgrr.Body.Close()
-		viewFgReport(fg)
+	if err := app.SetRoot(flex, true).EnableMouse(false).Run(); err != nil {
+		panic(err)
 	}
 }
 
 func chat() {
 	clear()
-	fmt.Println()
-	fmt.Println()
-	fmt.Println("Not implemented yet, sorry! Press enter to return to the main menu.")
-	fmt.Println()
-	fmt.Println()
-	p := prompt.Input("", emptyCompleter)
-	fmt.Println(p)
-	mainMenu("")
+	host := "159.89.8.129"
+	port := "3333"
+	connect := host + ":" + port
+	c, err := net.Dial("tcp", connect)
+	fmt.Fprintf(c, "/join:"+currentUser+"\n")
+	if err != nil {
+		mainMenu(err.Error())
+	}
+
+	online := tui.NewVBox(
+		tui.NewLabel("ONLINE"),
+	)
+	online.SetSizePolicy(tui.Expanding, tui.Expanding)
+
+	offline := tui.NewVBox(
+		tui.NewLabel("OFFLINE"),
+	)
+	offline.SetSizePolicy(tui.Expanding, tui.Expanding)
+
+	sidebar := tui.NewVBox(
+		online,
+		tui.NewSpacer(),
+		offline,
+	)
+	sidebar.SetBorder(true)
+
+	history := tui.NewVBox()
+
+	pastMessages := getMessages()
+
+	historyScroll := tui.NewScrollArea(history)
+	historyScroll.SetAutoscrollToBottom(true)
+
+	historyBox := tui.NewVBox(historyScroll)
+	historyBox.SetBorder(true)
+
+	input := tui.NewEntry()
+	input.SetFocused(true)
+	input.SetSizePolicy(tui.Expanding, tui.Maximum)
+
+	inputBox := tui.NewHBox(input)
+	inputBox.SetBorder(true)
+	inputBox.SetSizePolicy(tui.Expanding, tui.Maximum)
+
+	chat := tui.NewVBox(historyBox, inputBox)
+	chat.SetSizePolicy(tui.Expanding, tui.Expanding)
+
+	root := tui.NewHBox(chat)
+
+	ui, err := tui.New(root)
+	if err != nil {
+		log.Fatal(err)
+	}
+
+	var once sync.Once
+	onceBody := func() {
+		ui.Quit()
+		c.Close()
+		mainMenu("")
+	}
+
+	ui.SetKeybinding("Up", func() {
+		historyScroll.Scroll(0, -1)
+	})
+
+	ui.SetKeybinding("Down", func() {
+		historyScroll.Scroll(0, 1)
+	})
+
+	ui.SetKeybinding("Esc", func() {
+		once.Do(onceBody)
+	})
+
+	for _, msg := range pastMessages {
+		snd := msg.Author + ": " + msg.Body
+		if msg.Author == "SERVER" {
+			history.Append(tui.NewHBox(
+				tui.NewLabel(wordWrap2(msg.Body, 80)),
+				tui.NewSpacer(),
+			))
+		} else {
+			history.Append(tui.NewHBox(
+				tui.NewLabel(wordWrap2(snd, 80)),
+				tui.NewSpacer(),
+			))
+		}
+	}
+
+	go func() {
+		for {
+			ui.Update(func() {})
+			input.OnSubmit(func(e *tui.Entry) {
+				if len(e.Text()) >= 1 {
+					fmt.Fprintf(c, e.Text()+"\n")
+				}
+				input.SetText("")
+			})
+
+			message, err := bufio.NewReader(c).ReadString('\n')
+			if err != nil {
+				once.Do(onceBody)
+			}
+			history.Append(tui.NewHBox(
+				tui.NewLabel(wordWrap2(message, 80)),
+				tui.NewSpacer(),
+			))
+		}
+	}()
+
+	if err := ui.Run(); err != nil {
+		fmt.Println("WHOA BIG ERROR HERE uWu IT'S A FUCKY WUCKY")
+		log.Fatal(err)
+	}
 }

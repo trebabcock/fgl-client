@@ -10,8 +10,6 @@ import (
 	"os/exec"
 
 	"github.com/c-bata/go-prompt"
-
-	config "fgl-client/config"
 )
 
 var (
@@ -32,6 +30,7 @@ type Version struct {
 }
 
 func main() {
+	//setName()
 	loadConfig()
 	if checkUpdate {
 		update()
@@ -39,10 +38,17 @@ func main() {
 	fglInit()
 }
 
+func setName() {
+	cmd := exec.Command("title", "FGL-Client")
+	err := cmd.Run()
+	if err != nil {
+		fmt.Println(err.Error())
+	}
+}
+
 func loadConfig() {
-	config := config.GetConfig()
-	server = config.IP + ":" + config.Port
-	checkUpdate = config.CheckUpdate
+	server = "159.89.8.129:2814"
+	checkUpdate = false
 }
 
 func init() {
@@ -61,6 +67,7 @@ func init() {
 
 func fglInit() {
 	loginMenu("")
+	//chat()
 }
 
 func update() {

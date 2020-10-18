@@ -8,11 +8,11 @@ import (
 )
 
 func baseURL(path string) string {
-	return server + path
+	return "http://" + server + path
 }
 
 func chatURL() string {
-	return server + "/chat"
+	return "ws://127.0.0.1:2814/chat"
 }
 
 func emptyCompleter(d prompt.Document) []prompt.Suggest {
@@ -59,6 +59,26 @@ func wordWrap(text string, lineWidth int) string {
 	for _, word := range words[1:] {
 		if len(word)+1 > spaceLeft {
 			wrapped += "\n" + word
+			spaceLeft = lineWidth - len(word)
+		} else {
+			wrapped += " " + word
+			spaceLeft -= 1 + len(word)
+		}
+	}
+
+	return wrapped
+}
+
+func wordWrap2(text string, lineWidth int) string {
+	words := strings.Fields(strings.TrimSpace(text))
+	if len(words) == 0 {
+		return text
+	}
+	wrapped := words[0]
+	spaceLeft := lineWidth - len(wrapped)
+	for _, word := range words[1:] {
+		if len(word)+1 > spaceLeft {
+			wrapped += "\n        " + word
 			spaceLeft = lineWidth - len(word)
 		} else {
 			wrapped += " " + word
