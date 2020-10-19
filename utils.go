@@ -45,7 +45,7 @@ func clear() {
 	if ok {
 		value()
 	} else {
-		panic("unsupported platform")
+		mClear["linux"]()
 	}
 }
 
