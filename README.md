@@ -14,10 +14,10 @@ You can build the client and [server](https://github.com/trebabcock/fgl-backend)
 - Gadget Reports
 - Member Reports
 - Interactive shell
+- Group messaging
 
 ### In Development  
 
-- Group chat
 - Private messages
 - Multiplayer games
 
