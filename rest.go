@@ -5,8 +5,8 @@ import (
 	"encoding/json"
 	"fmt"
 	"io/ioutil"
+	"log"
 	"net/http"
-	"os"
 )
 
 func login(creds credentials) {
@@ -16,7 +16,8 @@ func login(creds credentials) {
 		loginMenu("Internal Server Error")
 	}
 	defer resp.Body.Close()
-	body, _ := ioutil.ReadAll(resp.Body)
+	//body, _ := ioutil.ReadAll(resp.Body)
+
 	switch resp.StatusCode {
 	case http.StatusNotFound:
 		loginMenu("Incorrect Username or Password")
@@ -25,7 +26,6 @@ func login(creds credentials) {
 	case http.StatusInternalServerError:
 		loginMenu("Internal Server Error")
 	case http.StatusOK:
-		os.Setenv("FGL_TOKEN", string(body))
 		currentUser = creds.Username
 		mainMenu("")
 	}
@@ -37,9 +37,8 @@ func register(creds credentials) {
 		fmt.Println(err.Error())
 	}
 	resp, err := http.Post(baseURL("/register"), "application/json", bytes.NewBuffer(credentials))
-	fmt.Println(string(credentials))
 	if err != nil {
-		fmt.Println(err.Error())
+		log.Fatal(err)
 	}
 	defer resp.Body.Close()
 
@@ -50,19 +49,34 @@ func register(creds credentials) {
 		loginMenu("Internal Server Error")
 	case http.StatusCreated:
 		loginMenu("")
+	default:
+		log.Fatal(resp.StatusCode)
 	}
 }
 
 func sendAnnouncement(announcement announcement) {
 	ann, _ := json.Marshal(announcement)
-	resp, err := http.Post(baseURL("/makeann"), "application/json", bytes.NewBuffer(ann))
+
+	client := &http.Client{}
+
+	req, err := http.NewRequest("POST", baseURL("/makeann"), bytes.NewBuffer(ann))
 	if err != nil {
-		mainMenu("Internal Server Error")
+		log.Fatal(err)
 	}
+
+	q := req.URL.Query()
+	q.Add("username", currentUser)
+	req.URL.RawQuery = q.Encode()
+
+	resp, err := client.Do(req)
+	if err != nil {
+		log.Fatal(err)
+	}
+
 	defer resp.Body.Close()
 	switch resp.StatusCode {
 	case http.StatusBadRequest:
-		mainMenu("Internal Server Error")
+		mainMenu("Bad Request")
 	case http.StatusInternalServerError:
 		mainMenu("Internal Server Error")
 	case http.StatusCreated:
@@ -280,9 +294,20 @@ func getAnnouncement(id string) announcement {
 func getAnnouncements() []announcement {
 	announcements := make([]announcement, 0)
 
-	resp, err := http.Get(baseURL("/announcements"))
+	client := &http.Client{}
+
+	req, err := http.NewRequest("GET", baseURL("/announcements"), nil)
 	if err != nil {
-		mainMenu("GET: Internal Server Error")
+		log.Fatal(err)
+	}
+
+	q := req.URL.Query()
+	q.Add("username", currentUser)
+	req.URL.RawQuery = q.Encode()
+
+	resp, err := client.Do(req)
+	if err != nil {
+		log.Fatal(err)
 	}
 
 	body, _ := ioutil.ReadAll(resp.Body)

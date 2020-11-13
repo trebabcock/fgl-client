@@ -15,6 +15,7 @@ import (
 var (
 	history     = prompt.NewHistory()
 	currentUser = ""
+	authCode    = ""
 	mClear      map[string]func()
 	currentDir  = directory{
 		Name: "~",
@@ -47,7 +48,7 @@ func setName() {
 }
 
 func loadConfig() {
-	server = "159.89.8.129:2814"
+	server = "www.fglteam.com"
 	checkUpdate = false
 }
 
