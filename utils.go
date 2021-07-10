@@ -8,7 +8,7 @@ import (
 )
 
 func baseURL(path string) string {
-	return "https://" + server + "/api/v1" + path
+	return "http://" + server + "/api/v1" + path
 }
 
 func chatURL() string {

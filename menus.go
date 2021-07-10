@@ -1198,7 +1198,8 @@ func listFgReports() {
 
 func chat() {
 	clear()
-	host := "159.89.8.129"
+	//host := "159.89.8.129"
+	host := "fglteam.com"
 	port := "3333"
 	connect := host + ":" + port
 	c, err := net.Dial("tcp", connect)

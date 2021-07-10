@@ -48,7 +48,7 @@ func setName() {
 }
 
 func loadConfig() {
-	server = "www.fglteam.com"
+	server = "fglteam.com"
 	checkUpdate = false
 }
 
